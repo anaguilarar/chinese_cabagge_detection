@@ -3,19 +3,19 @@ import glob
 import random
 
 from bs4 import BeautifulSoup
-from joblib import Parallel, delayed
 
-import tensorflow as tf
+# import tensorflow as tf
+import io
 import numpy as np
 from six import BytesIO
 from PIL import Image
 import matplotlib.pyplot as plt
-from utils import tf_model_detection as tfmd
+from utils.tf_model_detection import single_image_detection
 
 from tqdm import tqdm
 
 
-## TODO: fif size is not working
+# TODO: fif size is not working
 
 def percentage_to_bb(bb, size):
     ymin = int(bb[0] * size[1])  # xmin
@@ -123,8 +123,8 @@ def load_image_into_numpy_array(path, scale_factor=None,
     uint8 numpy array with shape (img_height, img_width, 3)
     """
 
-    img_data = tf.io.gfile.GFile(path, 'rb').read()
-    image = Image.open(BytesIO(img_data))
+    # img_data = tf.io.gfile.GFile(path, 'rb').read()
+    image = Image.open(BytesIO(io.open(path, "rb", buffering=0).read()))
     (im_width, im_height) = image.size
     if scale_factor is not None:
         im_width = int(im_width * scale_factor / 100)
@@ -136,77 +136,6 @@ def load_image_into_numpy_array(path, scale_factor=None,
         image = image.resize((im_width, im_height))
     return np.array(image.getdata()).reshape(
         (im_height, im_width, 3)).astype(np.uint8)
-
-
-def convert_to_tf_tensors(list_images, bb_list=None, classes=None):
-    label_id_offset = 1
-    train_image_tensors = []
-
-    # lists containing the one-hot encoded classes and ground truth boxes
-    gt_classes_one_hot_tensors = []
-    gt_box_tensors = []
-
-    for i in range(len(list_images)):
-        train_image_np = list_images[i]
-        gt_box_np = bb_list[i]
-        # convert training image to tensor, add batch dimension, and add to list
-        train_image_tensors.append(
-            tf.expand_dims(tf.convert_to_tensor(
-                train_image_np, dtype=tf.float32), axis=0))
-
-        if bb_list is not None:
-            # convert numpy array to tensor, then add to list
-            gt_box_tensors.append(tf.convert_to_tensor(gt_box_np,
-                                                       dtype=tf.float32))
-
-            # apply offset to to have zero-indexed ground truth classes
-            zero_indexed_groundtruth_classes = tf.convert_to_tensor(
-                np.ones(shape=[gt_box_np.shape[0]], dtype=np.int32) - label_id_offset)
-
-            # do one-hot encoding to ground truth classes
-            gt_classes_one_hot_tensors.append(tf.one_hot(
-                zero_indexed_groundtruth_classes, classes))
-
-    if len(gt_box_tensors) > 0:
-        output = [train_image_tensors, gt_box_tensors, gt_classes_one_hot_tensors]
-    else:
-        output = train_image_tensors
-
-    return output
-
-
-def single_image_detection(image, model,
-                           cat_index,
-                           filename=None,
-                           min_score=0.55,
-                           fig_size=(15, 20),
-                           plot=False
-                           ):
-    label_id_offset = 1
-    tensor_img = tf.expand_dims(tf.convert_to_tensor(
-        image, dtype=tf.float32), axis=0)
-
-    detections = tfmd.detect(tensor_img, model)
-    nontf_detections = {
-        'detection_boxes': detections['detection_boxes'][0].numpy(),
-        'detection_classes': detections['detection_classes'][0].numpy().astype(
-            np.uint32) + label_id_offset,
-        'detection_scores': detections['detection_scores'][0].numpy()
-
-    }
-    if plot:
-        tfmd.plot_detections(
-            image,
-            nontf_detections['detection_boxes'],
-            nontf_detections['detection_classes'],
-            nontf_detections['detection_scores'],
-            cat_index,
-            figsize=fig_size,
-            image_name=filename,
-            min_score=min_score
-        )
-
-    return nontf_detections
 
 
 def export_masked_image(image, ground_box, filename):
@@ -222,6 +151,27 @@ def export_masked_image(image, ground_box, filename):
 
 class ImageData:
 
+    def _read_single_image(self, id_image=0, scale_factor=None, size=None, pattern="\\", pos_id=-2):
+
+        kwargs = {'scale_factor': scale_factor,
+                  'size': size}
+
+        if type(id_image) == str:
+            id_image = [i for i in range(len(self.jpg_path_files))
+                        if id_image in self.jpg_path_files[i]]
+
+        id_image = self.jpg_path_files[id_image].split(pattern)[pos_id:]
+        id_image_folder = '_'.join(id_image)
+        selectid = 0
+        if len(id_image) > 0:
+            selectid = -1
+
+        path_img_id = [i for i in self.jpg_path_files if id_image[selectid] in i]
+
+        single_image = load_image_into_numpy_array(path_img_id[0], **kwargs)
+
+        return single_image, id_image_folder
+
     def _organice_data(self, idx, kwargs):
         img_list = []
         bb_list = []
@@ -232,13 +182,44 @@ class ImageData:
             bb_list.append(img_info[1][m])
         return [img_list, bb_list]
 
+    def change_images_contrast(self,
+
+                               nsamples=5, alpha=1.0, beta=0.0):
+        """
+
+
+        :param nsamples:
+        :param alpha: Enter the alpha value [1.0-3.0]
+        :param beta: Enter the beta value [0-100]
+        :return:
+        """
+
+
+        if type(beta) is list:
+            beta = random.sample(range(beta[0], beta[1]), nsamples)
+        else:
+            beta = [beta]
+
+        images_list = []
+        for i in range(len(self.images_data)):
+            image = self.images_data[i]
+            new_image = np.zeros(image.shape, image.dtype)
+            for bright in alpha:
+                for y in range(image.shape[0]):
+                    for x in range(image.shape[1]):
+                        for c in range(image.shape[2]):
+                            new_image[y, x, c] = np.clip(al * image[y, x, c] + beta, 0, 255)
+
+                images_list.append(new_image)
+
     def multiple_images(self,
                         n_samples=None,
                         scale_factor=None,
                         size=None,
                         shuffle=True,
                         seed=123,
-                        start=0):
+                        start=0,
+                        read_images=True):
 
         kwargs = {'scale_factor': scale_factor,
                   'size': size}
@@ -256,7 +237,7 @@ class ImageData:
 
         for i in tqdm(range(start, n_samples)):
 
-            img_info = self.single_image(list_idx[i], **kwargs)
+            img_info = self.single_image(list_idx[i], read_images=read_images, **kwargs)
             for m in range(len(img_info[1])):
                 img_list.append(img_info[0][0])
                 bb_list.append(img_info[1][m])
@@ -264,7 +245,7 @@ class ImageData:
 
         return img_list, bb_list, idx_list
 
-    def single_image(self, idx, **kwargs):
+    def single_image(self, idx, read_images=True, **kwargs):
 
         with open(self._path_files[idx], 'r', encoding="utf8") as f:
             data = f.read()
@@ -280,38 +261,20 @@ class ImageData:
 
         for m in range(len(bbdata)):
             gt_boxes.append(bb_topercentage(bbdata[m], sizedata))
-            train_images_np.append(load_image_into_numpy_array(bsdata[0], **kwargs))
+            if read_images:
+                train_images_np.append(load_image_into_numpy_array(bsdata[0], **kwargs))
+            else:
+                train_images_np.append(None)
 
         return [train_images_np, gt_boxes]
-
-    def _read_single_image(self, id_image=0, scale_factor=None, size=None, pattern="\\", pos_id=-2):
-
-        kwargs = {'scale_factor': scale_factor,
-                  'size': size}
-
-        if type(id_image) == str:
-            id_image = [i for i in range(len(self._path_files))
-                        if id_image in self._path_files[i]]
-
-        id_image = self._path_files[id_image].split(pattern)[pos_id:]
-        id_image_folder = '_'.join(id_image)
-        selectid = 0
-        if len(id_image) > 0:
-            selectid = -1
-
-        path_img_id = [i for i in self._path_files if id_image[selectid] in i]
-
-        single_image = load_image_into_numpy_array(path_img_id[0], **kwargs)
-
-        return single_image, id_image_folder
 
     def read_image_data(self, id_images=None, scale_factor=None, size=None, pattern="\\", pos_id=-2):
 
         kwargs = {'scale_factor': scale_factor, 'size': size, 'pattern': pattern,
                   'pos_id': pos_id}
-        
+
         if id_images is None:
-            id_images = list(range(len(self._path_files)))
+            id_images = list(range(len(self.jpg_path_files)))
 
         images_list = []
         file_names = []
@@ -370,8 +333,14 @@ class ImageData:
         self._path_files = None
 
         if pattern is not None:
-            self._path_files = list_files(source, pattern=pattern)
 
+            self._path_files = list_files(source, pattern=pattern)
+            if pattern == "xml":
+                self.jpg_path_files = [i[:-4] + ".jpg" for i in self._path_files]
+
+            if pattern == 'jpg':
+                self.jpg_path_files = self._path_files
+        # TODO: separete images_data and id_image
         if id_image is not None:
             if id_image == "all":
                 id_image = None
