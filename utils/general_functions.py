@@ -1,6 +1,7 @@
 import random
 import numpy as np
-
+import cv2
+import os
 
 def get_ids_split_datasets(list_images_path, val_perc=20, shuffle=True, seed=123, test_perc=None):
     n_paths = len(list_images_path)
@@ -24,3 +25,40 @@ def get_ids_split_datasets(list_images_path, val_perc=20, shuffle=True, seed=123
         output = [train_ids, val_ids, test_ids]
 
     return output
+
+def check_folder(folderpath, verbose = False):
+
+    if folderpath is not None:
+        if not os.path.exists(folderpath):
+            os.mkdir(folderpath)
+            if verbose: 
+                print("following path was created {}".format(folderpath))
+    else:
+        folderpath = ""
+    return folderpath
+
+
+## taken from https://medium.com/@iKhushPatel/convert-video-to-images-images-to-video-using-opencv-python-db27a128a481
+
+
+def from_video_toimages(video_path, outputpath = None, frame_rate = 5, preffix = "image"):
+
+    outputpath = check_folder(outputpath)
+
+    vidcap = cv2.VideoCapture(video_path)
+    def getFrame(sec):
+        vidcap.set(cv2.CAP_PROP_POS_MSEC,sec*1000)
+        hasFrames,image = vidcap.read()
+        if hasFrames:
+            cv2.imwrite(os.path.join(outputpath, preffix+str(count)+".jpg"), image)     # save frame as JPG file
+        return hasFrames
+
+    sec = 0
+
+    count=1
+    success = getFrame(sec)
+    while success:
+        count = count + 1
+        sec = sec + frame_rate
+        sec = round(sec, 2)
+        success = getFrame(sec)

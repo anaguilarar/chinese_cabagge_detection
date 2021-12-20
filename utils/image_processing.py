@@ -1,21 +1,36 @@
 import os
 import glob
 import random
+import itertools
 
 from bs4 import BeautifulSoup
 
 # import tensorflow as tf
 import io
 import numpy as np
+from numpy.lib.function_base import kaiser
 from six import BytesIO
 from PIL import Image
 import matplotlib.pyplot as plt
 from utils.tf_model_detection import single_image_detection
+from utils.plt_functions import plot_single_image, plot_single_image_odlabel
+from utils.image_functions import split_image, change_images_contrast, from_array_2_jpg
 
 from tqdm import tqdm
 
 
 # TODO: fif size is not working
+# TODO: create a different class for reading pascal data as images
+
+
+def get_filename_frompath(imgpath):
+    imgfilename = imgpath.split('\\')[-1]
+
+    if imgfilename.endswith('jpg'):
+        imgfilename = imgfilename[:-4]
+
+    return imgfilename
+
 
 def percentage_to_bb(bb, size):
     ymin = int(bb[0] * size[1])  # xmin
@@ -151,6 +166,103 @@ def export_masked_image(image, ground_box, filename):
 
 class ImageData:
 
+    @property
+    def od_labels(self):
+        return LabelData(self).labels
+
+    def to_jpg(self, output_path, data_type=None, size=None, verbose=False) -> None:
+
+        if data_type is not None:
+            data_type = [data_type] if type(data_type) != list else data_type
+        else:
+            data_type = self._augmented_data.keys()
+
+        for datatype in data_type:
+            for idimage in range(len(self._augmented_data[datatype]['imgs'])):
+                fn = self._augmented_data[datatype]['names'][idimage] + '.jpg'
+                fn_path = os.path.join(output_path, fn)
+                from_array_2_jpg(self._augmented_data[datatype]['imgs'][idimage],
+                                 fn_path,
+                                 size=size,
+                                 verbose=verbose)
+
+    def split_data_into_tiles(self, nrows=None, ncols=None, data_type=None):
+
+        if data_type is not None:
+            data_type = [data_type] if type(data_type) != list else data_type
+        else:
+            data_type = self._augmented_data.keys()
+
+        data_type = [i for i in data_type if i != 'tiles']
+        listimgs = []
+        fnlist = []
+        for datatype in list(data_type):
+
+            for idimage in range(len(self._augmented_data[datatype]['imgs'])):
+                tilesdata = split_image(self._augmented_data[datatype]['imgs'][idimage],
+                                        nrows=nrows, ncols=ncols)
+
+                fnlist.append(["{}_tile_{}".format(
+                    self._augmented_data[datatype]['names'][idimage],
+                    i) for i in range(len(tilesdata))])
+
+                listimgs.append(tilesdata)
+
+        self.imgs_tiled = listimgs
+
+        newdata = {'tiles': {'imgs': list(itertools.chain.from_iterable(listimgs)),
+                             'names': list(itertools.chain.from_iterable(fnlist))}}
+
+        self._augmented_data.update(newdata)
+        print('{} images were added'.format(len(list(itertools.chain.from_iterable(listimgs)))))
+
+    def constrast_augmentation(self, data_type=None, **kwargs):
+
+        if data_type is not None:
+            data_type = [data_type] if type(data_type) != list else data_type
+        else:
+            data_type = self._augmented_data.keys()
+
+        data_type = [i for i in data_type if i != 'contrast']
+
+        listimgs = []
+        fnlist = []
+        for datatype in data_type:
+            for idimage in range(len(self._augmented_data[datatype]['imgs'])):
+                contrastdata, combs = change_images_contrast(
+                    self._augmented_data[datatype]['imgs'][idimage],
+                    **kwargs)
+
+                fnlist.append([
+                    "{}_contrast_{}".format(
+                        self._augmented_data[datatype]['names'][idimage],
+                        comb) for comb in combs])
+
+                listimgs.append(contrastdata)
+
+        self.imgs_contrasted = listimgs
+
+        newdata = {'contrast': {'imgs': list(itertools.chain.from_iterable(listimgs)),
+                                'names': list(itertools.chain.from_iterable(fnlist))}}
+
+        self._augmented_data.update(newdata)
+        print('{} images were added'.format(len(list(itertools.chain.from_iterable(listimgs)))))
+
+    def plot_image(self, id_image=0, figsize=(12, 10), add_label=False):
+        if add_label:
+            vector = []
+            imgsize = (self.images_data[id_image].shape[0], self.images_data[id_image].shape[1])
+            for j in range(len(self.od_labels[id_image])):
+                vector.append(from_yolo_toxy(
+                    [float(i) for i in self.od_labels[id_image][j]],
+                    imgsize))
+
+            plot_single_image_odlabel(self.images_data[id_image], vector)
+
+        else:
+
+            plot_single_image(self.images_data, id_image, figsize)
+
     def _read_single_image(self, id_image=0, scale_factor=None, size=None, pattern="\\", pos_id=-2):
 
         kwargs = {'scale_factor': scale_factor,
@@ -181,36 +293,6 @@ class ImageData:
             img_list.append(img_info[0][0])
             bb_list.append(img_info[1][m])
         return [img_list, bb_list]
-
-    def change_images_contrast(self,
-
-                               nsamples=5, alpha=1.0, beta=0.0):
-        """
-
-
-        :param nsamples:
-        :param alpha: Enter the alpha value [1.0-3.0]
-        :param beta: Enter the beta value [0-100]
-        :return:
-        """
-
-
-        if type(beta) is list:
-            beta = random.sample(range(beta[0], beta[1]), nsamples)
-        else:
-            beta = [beta]
-
-        images_list = []
-        for i in range(len(self.images_data)):
-            image = self.images_data[i]
-            new_image = np.zeros(image.shape, image.dtype)
-            for bright in alpha:
-                for y in range(image.shape[0]):
-                    for x in range(image.shape[1]):
-                        for c in range(image.shape[2]):
-                            new_image[y, x, c] = np.clip(al * image[y, x, c] + beta, 0, 255)
-
-                images_list.append(new_image)
 
     def multiple_images(self,
                         n_samples=None,
@@ -273,13 +355,10 @@ class ImageData:
         kwargs = {'scale_factor': scale_factor, 'size': size, 'pattern': pattern,
                   'pos_id': pos_id}
 
-        if id_images is None:
-            id_images = list(range(len(self.jpg_path_files)))
-
         images_list = []
         file_names = []
         for i in tqdm(range(len(id_images))):
-            imgdata = self._read_single_image(id_images[i], **kwargs)
+            imgdata = self._read_single_image(i, **kwargs)
             images_list.append(imgdata[0])
             file_names.append(imgdata[1])
 
@@ -318,7 +397,8 @@ class ImageData:
                  id_image=None,
                  image_size=None,
                  scale_percentage=None,
-                 pattern=None,
+                 pattern='jpg',
+                 label_type=None,
                  sep_pattern="\\"):
         """
 
@@ -329,22 +409,107 @@ class ImageData:
         :param pattern:
         :param sep_pattern:
         """
-
+        self.imgs_contrasted = None
         self._path_files = None
-
+        self._input_path = source
         if pattern is not None:
 
             self._path_files = list_files(source, pattern=pattern)
-            if pattern == "xml":
+            if label_type == "xml":
                 self.jpg_path_files = [i[:-4] + ".jpg" for i in self._path_files]
 
             if pattern == 'jpg':
                 self.jpg_path_files = self._path_files
+
         # TODO: separete images_data and id_image
         if id_image is not None:
             if id_image == "all":
-                id_image = None
-            self.images_data, self.id_image = self.read_image_data(id_images=id_image,
-                                                                   scale_factor=scale_percentage,
-                                                                   size=image_size,
-                                                                   pattern=sep_pattern, pos_id=-2)
+                id_image = list(range(len(self.jpg_path_files)))
+            if type(id_image) != list:
+                id_image = [id_image]
+            self.jpg_path_files = [self.jpg_path_files[i] for i in id_image]
+
+        else:
+            id_image = list(range(len(self.jpg_path_files)))
+
+        self.images_data, self.id_image = self.read_image_data(id_images=id_image,
+                                                               scale_factor=scale_percentage,
+                                                               size=image_size,
+                                                               pattern=sep_pattern, pos_id=-2)
+
+        fn_originals = [get_filename_frompath(self.jpg_path_files[i])
+                        for i in range(len(self.jpg_path_files))]
+
+        self._augmented_data = {'original': {'imgs': self.images_data,
+                                             'names': fn_originals}}
+
+
+def from_yolo_toxy(yolo_style, size):
+    dh, dw = size
+    _, x, y, w, h = yolo_style
+
+    l = int((x - w / 2) * dw)
+    r = int((x + w / 2) * dw)
+    t = int((y - h / 2) * dh)
+    b = int((y + h / 2) * dh)
+
+    if l < 0:
+        l = 0
+    if r > dw - 1:
+        r = dw - 1
+    if t < 0:
+        t = 0
+    if b > dh - 1:
+        b = dh - 1
+
+    return (l, r, t, b)
+
+
+class LabelData:
+
+    def __init__(self,
+                 img_class,
+                 label_type="yolo",
+                 pattern=None):
+
+        self.labeled_data = None
+
+        if label_type == "yolo":
+
+            source = img_class._input_path
+
+            pattern = 'txt'
+            self.labels_path_files = list_files(source, pattern=pattern)
+
+            imgsfilepaths = img_class.jpg_path_files.copy()
+
+            fn = [labelfn.split('\\')[-1][:-4] for labelfn in self.labels_path_files]
+            fnorig = [labelfn for labelfn in self.labels_path_files]
+
+            organized_labels = []
+            labels_data = []
+            idlist = []
+            for i, imgfn in enumerate(imgsfilepaths):
+                if '\\' in imgfn:
+                    imgfn = imgfn.split('\\')[-1]
+                if imgfn.endswith('jpg'):
+                    imgfn = imgfn[:-4]
+
+                lines = None
+                datatxt = None
+                if imgfn in fn:
+                    datatxt = fnorig[fn.index(imgfn)]
+                    with open(datatxt, 'rb') as src:
+                        lines = src.readlines()
+                    lines = [z.decode().split(' ') for z in lines]
+                    idlist.append(i)
+
+                organized_labels.append(datatxt)
+                labels_data.append(lines)
+
+            # self.labeled_data = {'images': [img_class._augmented_data['original']['imgs'][i] for i in idlist],
+            #                     'yolo_boundary':labels_data,
+            #                     'filenames':organized_labels}    
+
+            self.labels = labels_data
+            self._path = organized_labels
