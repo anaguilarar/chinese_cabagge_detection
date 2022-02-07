@@ -2,6 +2,7 @@ import random
 import numpy as np
 import cv2
 import os
+import glob
 
 def get_ids_split_datasets(list_images_path, val_perc=20, shuffle=True, seed=123, test_perc=None):
     n_paths = len(list_images_path)
@@ -62,3 +63,25 @@ def from_video_toimages(video_path, outputpath = None, frame_rate = 5, preffix =
         sec = sec + frame_rate
         sec = round(sec, 2)
         success = getFrame(sec)
+
+
+def get_filename_frompath(imgpath, pattern = 'jpg'):
+    imgfilename = imgpath.split('\\')[-1]
+
+    if imgfilename.endswith(pattern):
+        imgfilename = imgfilename[:-4]
+
+    return imgfilename
+
+
+def list_files(input_path, pattern="xml"):
+    """
+
+    :param input_path:
+    :param pattern:
+    :return:
+    """
+    # taken from https://www.askpython.com/python/examples/list-files-in-a-directory-using-python
+
+    files = glob.glob(input_path + '**/*' + pattern, recursive=True)
+    return [f for f in files if os.path.isfile(f)]
