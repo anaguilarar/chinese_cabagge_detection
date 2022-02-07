@@ -10,7 +10,6 @@ import math
 
 import cv2
 
-
 def start_points(size, split_size, overlap=0.0):
     points = [0]
     stride = int(split_size * (1 - overlap))

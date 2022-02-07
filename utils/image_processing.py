@@ -21,7 +21,7 @@ from utils.image_functions import blur_image, split_image, change_images_contras
 from utils.image_functions import rotate_npimage, expand_npimage
 
 from utils.general_functions import get_filename_frompath,list_files
-from utils.bb_assignment import from_yolo_toxy
+from utils.bb_assignment import from_yolo_toxy, LabelData, label_transform
 
 from tqdm import tqdm
 
@@ -156,7 +156,8 @@ class ImageData:
 
     @property
     def od_labels(self):
-        return LabelData(self).labels
+
+        return self._labels
     
     @property
     def images_data(self):
@@ -195,20 +196,31 @@ class ImageData:
                 len(list(self._augmented_data.keys()))+1)
         listimgs = []
         fnlist = []
-        
+        odlabels = []
         for datatype in datainput:
             imgstoprocess = self._augmented_data[datatype]
             for idimage in range(len(imgstoprocess['imgs'])):
-
+                
                 newdata, combs = eval("{}(imgstoprocess['imgs'][idimage],**{})".format(
                                       func,
-                                      kwargs))   
-
+                                      kwargs))
+                 
                 fnlist.append([
                     "{}_{}_{}".format(
                         imgstoprocess['names'][idimage],
                         label,
-                        comb) for comb in combs])
+                        comb) for comb in combs]) 
+
+                if self.od_labels[datatype] is not None:
+                    #TODO: CONTRAS BOUNDING BOX REPETITIONS
+                    bb = eval(
+                            "label_transform(imgstoprocess['imgs'][idimage].shape,self.od_labels[datatype][idimage],label,combs)")
+                    if label == 'contrast':
+                        bb = [bb[0] for i in range(len(fnlist))]
+
+                    odlabels.append(bb)
+                            
+
 
                 listimgs.append(newdata)
         if label in ['contrast','tiles']:
@@ -219,6 +231,13 @@ class ImageData:
 
         self._augmented_data.update(newdata)
         print('{} were added to images data'.format(len(listimgs)))
+
+        # label
+        if len(odlabels)>0:
+            newdata = {label: odlabels}
+        else:
+            newdata = {label: None}
+        self._labels.update(newdata)
 
     
     def split_data_into_tiles(self, data_type=None, **kwargs):
@@ -258,19 +277,19 @@ class ImageData:
 
 
     def plot_image(self, id_image=0, figsize=(12, 10), add_label=False, sourcetype = 'raw'):
-        if add_label:
+        if add_label and self.od_labels[sourcetype] is not None:
             vector = []
-            imgsize = (self.images_data[sourcetype][id_image].shape[0], self.images_data[type][id_image].shape[1])
-            for j in range(len(self.od_labels[id_image])):
+            imgsize = (self.images_data[sourcetype][id_image].shape[0], self.images_data[sourcetype][id_image].shape[1])
+            for j in range(len(self.od_labels[sourcetype][id_image])):
                 vector.append(from_yolo_toxy(
-                    [float(i) for i in self.od_labels[id_image][j]],
+                    [float(i) for i in self.od_labels[sourcetype][id_image][j]],
                     imgsize))
 
-            plot_single_image_odlabel(self.images_data[sourcetype][id_image], vector)
+            plot_single_image_odlabel(self.images_data[sourcetype][id_image], vector, figsize=figsize)
 
         else:
 
-            plot_single_image(self.images_data, id_image, figsize)
+            plot_single_image(self.images_data[sourcetype], id_image, figsize)
 
     def _read_single_image(self, id_image=0, scale_factor=None, size=None, pattern="\\", pos_id=-2):
 
@@ -443,9 +462,18 @@ class ImageData:
                         for i in range(len(self.jpg_path_files))]
 
         self._augmented_data = {'raw': {'imgs': images_data,
-                                             'names': fn_originals}}
+                                        'names': fn_originals}}
 
+        #try:
+        alllabels = LabelData(self).labels
+        nnone = len([lab for lab in alllabels if lab is None])
 
+        if nnone ==  len(images_data):
+            alllabels = None
+
+        self._labels = {'raw': alllabels}
+        #except:
+        #    self._labels = None
 
 
 """
