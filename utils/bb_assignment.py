@@ -1,6 +1,7 @@
 from utils.general_functions import list_files
 import numpy as np
 from math import cos, sin, radians
+import os
 
 def expanded_yolobb(yolobb, origsize,expandsize):
 
@@ -70,6 +71,8 @@ def rotate_yolobb(yolobb,imageshape, angle):
     return [yolobb[0], xr, yr, wr, hr]
 
 
+
+
 def label_transform(imageshape, yolobb, augtype, combination, nrep = 1):
     
     if augtype == 'expand':
@@ -92,6 +95,22 @@ def label_transform(imageshape, yolobb, augtype, combination, nrep = 1):
         newbb = [newbb for i in range(nrep)]
         
     return newbb
+
+
+def save_yololabels(bbyolo, fn,outputdir = None):
+
+    if outputdir is not None:
+        fn = os.path.join(outputdir, fn)
+    if bbyolo is not None:
+        with open(fn, 'w') as dst:
+            for i in range(len(bbyolo)):
+                strlist = [str(int(bbyolo[i][0]))]
+                for j in range(1,len(bbyolo[i])):
+                    strlist.append(str(bbyolo[i][j]))
+                if len(bbyolo)-1 == i:
+                    dst.writelines(" ".join(strlist))
+                else:
+                    dst.writelines(" ".join(strlist) + '\n')
 
 
 def from_yolo_toxy(yolo_style, size):

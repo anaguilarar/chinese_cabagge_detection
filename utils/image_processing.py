@@ -5,7 +5,7 @@ import random
 import itertools
 from unittest import removeResult
 
-from bs4 import BeautifulSoup
+#from bs4 import BeautifulSoup
 import matplotlib.pyplot as plt
 from PIL import Image
 
@@ -18,10 +18,11 @@ from six import BytesIO
 #from utils.tf_model_detection import single_image_detection
 from utils.plt_functions import plot_single_image, plot_single_image_odlabel
 from utils.image_functions import blur_image, split_image, change_images_contrast, from_array_2_jpg
-from utils.image_functions import rotate_npimage, expand_npimage
+from utils.image_functions import rotate_npimage, expand_npimage, clahe_img, shift_hsv
+
 
 from utils.general_functions import get_filename_frompath,list_files
-from utils.bb_assignment import from_yolo_toxy, LabelData, label_transform
+from utils.bb_assignment import from_yolo_toxy, LabelData, label_transform, save_yololabels
 
 from tqdm import tqdm
 
@@ -51,19 +52,19 @@ def bb_topercentage(bb, size):
 
 
 
-def get_image_path_from_xml(data):
-    """
+#def get_image_path_from_xml(data):
+#    """
 
-    :param xml_file:
-    :return:
-    """
+#    :param xml_file:
+#    :return:
+#    """
 
-    bs_data = BeautifulSoup(data, 'xml')
-    path_b4 = bs_data.find_all('path')
-    image_b4 = bs_data.find_all('filename')
+#    bs_data = BeautifulSoup(data, 'xml')
+#    path_b4 = bs_data.find_all('path')
+#    image_b4 = bs_data.find_all('filename')
 
-    return [path_b4[0].text,
-            image_b4[0].text]
+#    return [path_b4[0].text,
+#            image_b4[0].text]
 
 
 def get_bbox(b4attribute):
@@ -77,14 +78,14 @@ def get_bbox(b4attribute):
             int(b4attribute.find_all('xmax')[0].text),
             int(b4attribute.find_all('ymax')[0].text)]
 
-
+"""
 def get_bounding_box_from_xml(data):
-    """
+
     This function only works with pascalIVOC annotation format
     more information in https://roboflow.com/formats/pascal-voc-xml
     :param xml_file:
     :return: list [xmin, ymin, xmax, ymax]
-    """
+
     bs_data = BeautifulSoup(data, 'xml')
     boundingbox_list = bs_data.find_all('bndbox')
     if len(boundingbox_list) > 1:
@@ -95,21 +96,17 @@ def get_bounding_box_from_xml(data):
         bb = [get_bbox(boundingbox_list[0])]
 
     return bb
-
-
+"""
+"""
 def get_image_orgsize_from_xml(data):
-    """
 
-    :param xml_file:
-    :return:
-    """
 
     bs_data = BeautifulSoup(data, 'xml')
     size_list = bs_data.find_all('size')
 
     return [int(size_list[0].find_all('height')[0].text),
             int(size_list[0].find_all('width')[0].text)]
-
+"""
 
 def load_image_into_numpy_array(path, scale_factor=None,
                                 size=None):
@@ -190,7 +187,10 @@ class ImageData:
 
         return augtype
 
-    def _augmentation(self, func, datainput, label = None, **kwargs):
+    def _augmentation(self, func, datainput, label = None, samplesize=None,seed = 123, **kwargs):
+        """
+        samplesize: int, percentage of data which will be sampled
+        """
         if label is None:
             label= "augmentation_{}".format(
                 len(list(self._augmented_data.keys()))+1)
@@ -199,7 +199,13 @@ class ImageData:
         odlabels = []
         for datatype in datainput:
             imgstoprocess = self._augmented_data[datatype]
-            for idimage in range(len(imgstoprocess['imgs'])):
+            idimages = range(len(imgstoprocess['imgs']))
+            if samplesize is not None:
+                lensample = int(len(imgstoprocess['imgs'])*float(samplesize)/100.)
+                random.seed(seed)
+                idimages = random.sample(idimages, lensample)
+
+            for idimage in idimages:
                 
                 newdata, combs = eval("{}(imgstoprocess['imgs'][idimage],**{})".format(
                                       func,
@@ -212,13 +218,14 @@ class ImageData:
                         comb) for comb in combs]) 
 
                 if self.od_labels[datatype] is not None:
-                    #TODO: CONTRAS BOUNDING BOX REPETITIONS
+
                     bb = eval(
                             "label_transform(imgstoprocess['imgs'][idimage].shape,self.od_labels[datatype][idimage],label,combs)")
                     if label == 'contrast':
-                        bb = [bb[0] for i in range(len(fnlist))]
-
-                    odlabels.append(bb)
+                        for i in range(len(combs)):
+                            odlabels.append(bb)
+                    else:
+                        odlabels.append(bb)
                             
 
 
@@ -247,33 +254,47 @@ class ImageData:
         self._augmentation(fun, data_type, label = labeld, **kwargs)
 
 
-    def aug_constrast_image(self, data_type=None, **kwargs):
+    def aug_constrast_image(self, data_type=None, samplesize=None,seed = 123,**kwargs):
         labeld = 'contrast'
         data_type = self._check_applyaug2specifictype(data_type, labeld)
         fun = "change_images_contrast"
-        self._augmentation(fun, data_type, label = labeld, **kwargs)
+        self._augmentation(fun, data_type, label = labeld, samplesize=samplesize,seed = seed,**kwargs)
 
-    def aug_rotate_image(self, data_type=None, **kwargs):
+    def aug_clahe_image(self, data_type=None, samplesize=None,seed = 123,**kwargs):
+        labeld = 'clahe'
+        data_type = self._check_applyaug2specifictype(data_type, labeld)
+        fun = "clahe_img"
+        self._augmentation(fun, data_type, label = labeld, samplesize=samplesize,seed = seed,**kwargs)
+
+
+    def aug_rotate_image(self, data_type=None,samplesize=None,seed = 123, **kwargs):
         labeld = 'rotate'
         data_type = self._check_applyaug2specifictype(data_type, labeld)
         fun = "rotate_npimage"
-        self._augmentation(fun, data_type, label = labeld, **kwargs)
+        self._augmentation(fun, data_type, label = labeld, samplesize=samplesize,seed = seed, **kwargs)
     
 
-    def aug_expand_image(self, data_type=None, **kwargs):
+    def aug_expand_image(self, data_type=None, samplesize=None,seed = 123,**kwargs):
         labeld = 'expand'
         data_type = self._check_applyaug2specifictype(data_type, labeld)
         fun = "expand_npimage"
         
-        self._augmentation(fun, data_type, label = labeld, **kwargs)
+        self._augmentation(fun, data_type, label = labeld, samplesize=samplesize,seed = seed, **kwargs)
+
+    def aug_change_hsv(self, data_type=None,samplesize=None,seed = 123, **kwargs):
+        labeld = 'hsv'
+        data_type = self._check_applyaug2specifictype(data_type, labeld)
+        fun = "shift_hsv"
+        
+        self._augmentation(fun, data_type, label = labeld, samplesize=samplesize,seed = seed, **kwargs)
         
 
-    def aug_blur_image(self, data_type=None, **kwargs):
+    def aug_blur_image(self, data_type=None,samplesize=None,seed = 123, **kwargs):
         labeld = 'blur'
         data_type = self._check_applyaug2specifictype(data_type, labeld)
         fun = "blur_image"
         
-        self._augmentation(fun, data_type, label = labeld, **kwargs)
+        self._augmentation(fun, data_type, label = labeld, samplesize=samplesize,seed = seed, **kwargs)
 
 
     def plot_image(self, id_image=0, figsize=(12, 10), add_label=False, sourcetype = 'raw'):
@@ -399,14 +420,36 @@ class ImageData:
         else:
             data_type = self._augmented_data.keys()
 
+        ## export labels if there are any
+        if self._labels['raw'] is not None:
+            if not os.path.isdir(os.path.join(output_path,'images')):
+                os.mkdir(os.path.join(output_path,'images'))
+
+            if not os.path.isdir(os.path.join(output_path,'labels')):
+                os.mkdir(os.path.join(output_path,'labels'))
+
         for datatype in data_type:
             for idimage in range(len(self._augmented_data[datatype]['imgs'])):
                 fn = self._augmented_data[datatype]['names'][idimage] + '.jpg'
                 fn_path = os.path.join(output_path, fn)
-                from_array_2_jpg(self._augmented_data[datatype]['imgs'][idimage],
+
+                if self._labels['raw'] is not None:
+                    if self._labels[datatype] is not None:
+
+                        save_yololabels(self._labels[datatype][idimage],
+                                    self._augmented_data[datatype]['names'][idimage] + '.txt' ,
+                                    outputdir= os.path.join(output_path,'labels'))
+                        if self._labels[datatype][idimage] is not None:
+                            from_array_2_jpg(self._augmented_data[datatype]['imgs'][idimage],
+                                    os.path.join(output_path,'images', fn),
+                                    size=size,
+                                    verbose=verbose)
+                else:
+                    from_array_2_jpg(self._augmented_data[datatype]['imgs'][idimage],
                                  fn_path,
                                  size=size,
                                  verbose=verbose)
+                
 
     def __init__(self,
                  source,
@@ -425,6 +468,7 @@ class ImageData:
         :param scale_percentage:
         :param pattern:
         :param sep_pattern:
+        :param path_to_images
         """
 
         self._path_files = None
@@ -432,6 +476,8 @@ class ImageData:
         if path_to_images:
             self._path_files = source
             self.jpg_path_files = self._path_files
+            self._input_path = "/".join(list(np.array(source[0].split('[/\\]'))[:-1]))
+
         else:
             if pattern is not None:
 
