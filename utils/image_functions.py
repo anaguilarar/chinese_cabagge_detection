@@ -286,3 +286,65 @@ def blur_image(image, radius=[0]):
     img = pil_image.filter(ImageFilter.GaussianBlur(radius))
 
     return np.array(img), [str(radius)]
+
+
+
+def cartimg_topolar_transform(nparray, anglestep = 5, max_angle = 360, expand_ratio = 40, nathreshhold = 5):
+
+    xsize = nparray.shape[1]
+    ysize = nparray.shape[0]
+    
+    if expand_ratio is None:
+        mayoraxisref = [xsize,ysize] if xsize > ysize else [ysize,xsize]
+        expand_ratio = (mayoraxisref[0]/mayoraxisref[1] - 1)*100
+
+    newwidth = int(xsize * expand_ratio / 100)
+    newheight = int(ysize * expand_ratio / 100)
+
+    # exand the image for not having problem whn one axis is bigger than other
+    pil_imgeexpand = ImageOps.expand(Image.fromarray(nparray), 
+                                     border=(newwidth, newheight), fill=np.nan)
+
+    
+    listacrossvalues = []
+    distances = []
+    # the image will be rotated, then the vertical values were be extracted with each new angle
+    for angle in range(0, max_angle, anglestep):
+        
+        imgrotated = pil_imgeexpand.copy().rotate(angle)
+        imgarray = np.array(imgrotated)
+        cpointy = int(imgarray.shape[0]/2)
+        cpointx = int(imgarray.shape[1]/2)
+
+        valuesacrossy = []
+        
+        i=(cpointy+0)
+        coordsacrossy = []
+        # it is important to have non values as nan, if there are to many non values in a row it will stop
+        countna = 0 
+        while (countna<nathreshhold) and (i<(imgarray.shape[0]-1)):
+            
+            if np.isnan(imgarray[i,cpointx]):
+                countna+=1
+            else:
+                coordsacrossy.append(i- cpointy)
+                valuesacrossy.append(imgarray[i,cpointx])
+                countna = 0
+            i+=1
+
+        distances.append(coordsacrossy)
+        listacrossvalues.append(valuesacrossy)
+    
+    maxval = 0
+    nrowid =0 
+    for i in range(len(distances)):
+        if maxval < len(distances[i]):
+            maxval = len(distances[i])
+            
+            nrowid = distances[i][len(distances[i])-1]
+    
+    for i in range(len(listacrossvalues)):
+        listacrossvalues[i] = listacrossvalues[i] + [np.nan for j in range((nrowid+1) - len(listacrossvalues[i]))]
+    
+
+    return [distances, np.array(listacrossvalues)]

@@ -79,6 +79,12 @@ def label_transform(imageshape, yolobb, augtype, combination, nrep = 1):
         attrs = float(combination[0])
         newbb = calculate_expanded_label( yolobb, imageshape,ratio = attrs)
 
+    if augtype =='clahe_img':
+        newbb = yolobb
+
+    if augtype == 'hsv':
+        newbb = yolobb
+        
     if augtype == 'contrast':
         newbb = yolobb
     
